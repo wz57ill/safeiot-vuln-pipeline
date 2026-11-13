@@ -1,0 +1,7 @@
+# Zigbee2MQTT runtime state — holds the network key and device DB. Never commit.
+z2m-data/
+coordinator_backup.json
+*.log
+
+# Host-specific serial port / timezone; may reveal local paths. Keep .env.example only.
+.env

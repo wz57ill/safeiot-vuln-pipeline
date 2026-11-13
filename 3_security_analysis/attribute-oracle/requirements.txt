@@ -1,0 +1,5 @@
+# MQTT client for the Zigbee2MQTT interface. v2 callback API is used in the engine.
+paho-mqtt>=2.1.0
+# YAML is only needed if you point the engine at configuration.yaml to auto-read the
+# broker/base_topic; kept light and optional.
+PyYAML>=6.0

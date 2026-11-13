@@ -1,0 +1,40 @@
+# attribute-oracle — stage 2 controller bring-up.
+#
+# Brings up the local Mosquitto broker and Zigbee2MQTT against the SONOFF ZBDongle-P.
+# Image tags are pinned for reproducibility from a clean clone.
+#
+# Set the dongle's serial port before starting, e.g.:
+#   cp .env.example .env    # then edit ZIGBEE_SERIAL_PORT
+#   docker compose up -d
+#
+# z2m-data/ (network key, device DB, coordinator backup) is created here and gitignored.
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2.0.20
+    container_name: attr-oracle-mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./z2m-data/mosquitto:/mosquitto/data
+
+  zigbee2mqtt:
+    image: koenkk/zigbee2mqtt:2.1.1
+    container_name: attr-oracle-z2m
+    restart: unless-stopped
+    depends_on:
+      - mosquitto
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./z2m-data:/app/data
+      - ./configuration.yaml:/app/data/configuration.yaml
+      - /run/udev:/run/udev:ro
+    devices:
+      # Pass the dongle through to the container. ZIGBEE_SERIAL_PORT comes from .env
+      # and is mapped to the port named in configuration.yaml (/dev/ttyACM0).
+      - "${ZIGBEE_SERIAL_PORT:?set ZIGBEE_SERIAL_PORT in .env (see .env.example)}:/dev/ttyACM0"
+    environment:
+      - TZ=${TZ:-UTC}

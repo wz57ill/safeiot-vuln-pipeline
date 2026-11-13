@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+# Local overrides that may contain real tokens/paths
+config.local.*
+*.secret

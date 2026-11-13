@@ -1,0 +1,54 @@
+# Zigbee2MQTT configuration for the attribute-oracle lab controller.
+#
+# The SONOFF ZBDongle-P (CC2652P, a Texas Instruments chip) runs as OUR OWN Zigbee
+# coordinator (Architecture A — see the repo-root context file). The Hue motion sensor
+# is paired to this network so stage 3 can enumerate its attributes over raw ZCL.
+#
+# Runtime state (network key, device database, coordinator backup) is written next to
+# this file under ./z2m-data and is gitignored — it must never be committed.
+
+version: 4
+
+mqtt:
+  base_topic: zigbee2mqtt
+  # The engine and this service share the Mosquitto broker from docker-compose.yml.
+  # Inside the compose network the broker is reachable as "mosquitto"; from the host
+  # (bare-metal Z2M) use mqtt://localhost:1883 instead.
+  server: mqtt://mosquitto:1883
+
+serial:
+  # CC2652P -> Z-Stack adapter. Override the port for your host via the
+  # ZIGBEE_SERIAL_PORT env var consumed by docker-compose.yml
+  # (Linux: /dev/ttyUSB0 or /dev/serial/by-id/...; macOS: /dev/tty.usbserial-XXXX).
+  port: /dev/ttyACM0
+  adapter: zstack
+
+frontend:
+  enabled: true
+  port: 8080
+
+# Pairing is opened MANUALLY for the one deliberate join (our stand-in for the
+# attacker's network-entry step), never left open. Keep this false and open a
+# bounded pairing window via the frontend or the bridge/request/permit_join topic.
+permit_join: false
+
+advanced:
+  # Let Z2M generate a random, per-network key on first start. Do not hard-code one;
+  # the generated key lands in ./z2m-data (gitignored).
+  network_key: GENERATE
+  # Pan IDs also randomized so this lab network is distinct from any nearby network.
+  pan_id: GENERATE
+  ext_pan_id: GENERATE
+  channel: 20
+  log_level: info
+  # Keep a readable record of raw ZCL traffic during enumeration/exploit runs.
+  log_output:
+    - console
+    - file
+
+# No Home Assistant discovery — this is a standalone lab controller.
+homeassistant:
+  enabled: false
+
+# Devices are listed here after they join; left empty for a clean clone.
+devices: {}
