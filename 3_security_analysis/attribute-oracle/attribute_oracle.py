@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import queue
 import sys
 import threading
@@ -95,6 +96,26 @@ EXPLOIT_TARGET = {
     "manufacturer_code": PHILIPS_MFG_CODE,
     "neutralize_value": 0,             # lowest sensitivity — confirm effect by walk-test
     "zcl_type": 0x20,                  # uint8; confirm from DiscoverAttributes output
+}
+
+# ── SmartThings baseline (the "visible" set) ──────────────────────────────────────
+#
+# The SmartThings edge driver exposes *capabilities*, not raw ZCL. To subtract the
+# visible set from the supported set, we map each capability+attribute the platform
+# surfaces back onto the SAME (cluster, attribute-token) pairs `enumerate` records
+# (see TARGET_CLUSTERS). Anything the device implements but that has no entry here —
+# notably the Philips sensitivity attribute 0x0030 — is therefore reported as hidden.
+#
+# Confirm empirically against the actual driver once the sensor is on the account;
+# a driver update could surface more (or fewer) capabilities.
+ST_API_BASE = "https://api.smartthings.com/v1"
+
+# (capability, capability-attribute) -> (zcl_cluster, zcl_attribute_token)
+ST_CAPABILITY_TO_ZCL: dict[tuple[str, str], tuple[str, Any]] = {
+    ("motionSensor", "motion"): ("msOccupancySensing", "occupancy"),
+    ("illuminanceMeasurement", "illuminance"): ("msIlluminanceMeasurement", "measuredValue"),
+    ("temperatureMeasurement", "temperature"): ("msTemperatureMeasurement", "measuredValue"),
+    ("battery", "battery"): ("genPowerCfg", "batteryPercentageRemaining"),
 }
 
 
@@ -277,6 +298,84 @@ def enumerate_supported(z2m: Z2MClient, device: dict, dwell: float) -> dict:
     return supported
 
 
+# ── SmartThings REST client (stdlib only) ─────────────────────────────────────────
+
+import urllib.error
+import urllib.request
+
+
+class SmartThingsError(RuntimeError):
+    pass
+
+
+def _st_get(path: str, token: str) -> Any:
+    """GET a SmartThings REST endpoint with a Personal Access Token.
+
+    PATs created in 2025+ last only ~24h, so generate a fresh one right before a run
+    (https://account.smartthings.com/tokens, scope r:devices:*).
+    """
+    req = urllib.request.Request(
+        f"{ST_API_BASE}{path}",
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310 (fixed https host)
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        hint = " (token expired or missing r:devices:* scope?)" if e.code in (401, 403) else ""
+        raise SmartThingsError(f"HTTP {e.code} on {path}{hint}") from e
+    except urllib.error.URLError as e:
+        raise SmartThingsError(f"cannot reach SmartThings API: {e.reason}") from e
+
+
+def st_find_device(token: str, name_hint: Optional[str]) -> dict:
+    data = _st_get("/devices", token)
+    items = data.get("items", []) if isinstance(data, dict) else []
+    for d in items:
+        label = (d.get("label") or d.get("name") or "")
+        if name_hint and name_hint.lower() in label.lower():
+            return d
+    for d in items:
+        label = (d.get("label") or d.get("name") or "").lower()
+        if "motion" in label or "hue" in label:
+            return d
+    raise SmartThingsError(
+        f"no matching device among {len(items)} on the account "
+        f"(try --st-device-id or --device <label hint>)")
+
+
+def st_status(token: str, device_id: str) -> dict:
+    return _st_get(f"/devices/{device_id}/status", token)
+
+
+def map_status_to_visible(status: dict) -> dict[str, list]:
+    """Map a /devices/{id}/status payload to the visible (cluster, attr) set.
+
+    Only capability attributes that are actually PRESENT in the status (the platform
+    surfaces them) and that have a known ZCL mapping are counted as visible.
+    """
+    visible: dict[str, set] = {}
+    unmapped: list[str] = []
+    components = status.get("components", {}) if isinstance(status, dict) else {}
+    for comp in components.values():
+        if not isinstance(comp, dict):
+            continue
+        for cap, attrs in comp.items():
+            if not isinstance(attrs, dict):
+                continue
+            for attr in attrs:
+                mapped = ST_CAPABILITY_TO_ZCL.get((cap, attr))
+                if mapped is None:
+                    unmapped.append(f"{cap}.{attr}")
+                    continue
+                cluster, token = mapped
+                visible.setdefault(cluster, set()).add(token)
+    return {
+        "visible": {c: sorted(v, key=str) for c, v in visible.items()},
+        "unmapped_capabilities": sorted(set(unmapped)),
+    }
+
+
 # ── Subcommands ─────────────────────────────────────────────────────────────────
 
 def cmd_env_check(args) -> int:
@@ -335,17 +434,52 @@ def cmd_enumerate(args) -> int:
 
 
 def cmd_baseline(args) -> int:
-    """STUB: record the platform-visible attribute set via the SmartThings CLI/API.
+    """Record the platform-visible attribute set from SmartThings.
 
-    Intentionally not wired to a live account yet. The intended shape:
-      smartthings devices:capabilities / devices:status via the CLI, mapped to the
-      ZCL clusters/attributes the edge driver surfaces, emitted as the same schema
-      as `enumerate` so `diff` can subtract the two.
+    Reads the device's capability status via the SmartThings REST API (or an offline
+    status dump via --from-status-json) and maps each surfaced capability attribute
+    back to the ZCL (cluster, attribute) pairs `enumerate` records, so `diff` can
+    subtract the two. Emits the 'attribute-oracle/visible/v1' schema.
     """
-    log("baseline (SmartThings visible set) is a stub — not yet wired to a live account.")
-    log("Produce 4_analysis_output/attribute-oracle/visible_attributes.json in the")
-    log("'attribute-oracle/visible/v1' schema, then run: attribute_oracle.py diff ...")
-    return 3
+    device_meta: dict = {}
+    if args.from_status_json:
+        log(f"reading offline SmartThings status dump: {args.from_status_json}")
+        status = _read_json(args.from_status_json)
+    else:
+        token = args.token
+        if not token:
+            log("no SmartThings token. Pass --token or set SMARTTHINGS_TOKEN "
+                "(https://account.smartthings.com/tokens, scope r:devices:*, ~24h lifetime).")
+            return 3
+        try:
+            if args.st_device_id:
+                device_id = args.st_device_id
+            else:
+                dev = st_find_device(token, args.device)
+                device_id = dev["deviceId"]
+                device_meta = {"label": dev.get("label"), "deviceId": device_id}
+                log(f"matched SmartThings device: {dev.get('label')} ({device_id})")
+            status = st_status(token, device_id)
+        except SmartThingsError as e:
+            log(f"SmartThings baseline failed: {e}")
+            return 3
+
+    mapped = map_status_to_visible(status)
+    report = {
+        "schema": "attribute-oracle/visible/v1",
+        "source": "smartthings-rest",
+        "device": device_meta,
+        "visible": mapped["visible"],
+        "unmapped_capabilities": mapped["unmapped_capabilities"],
+        "note": "visible = what the SmartThings edge driver surfaces, mapped to ZCL; "
+                "subtract from the supported set with `diff`.",
+    }
+    _write_json(args.out, report)
+    n = sum(len(v) for v in mapped["visible"].values())
+    log(f"platform surfaced {n} ZCL-mapped attribute(s); "
+        f"{len(mapped['unmapped_capabilities'])} capability attr(s) had no ZCL mapping")
+    log(f"visible-set report written: {args.out}")
+    return 0
 
 
 def cmd_diff(args) -> int:
@@ -495,7 +629,15 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--out", default="../../4_analysis_output/attribute-oracle/supported_attributes.json")
     e.set_defaults(func=cmd_enumerate)
 
-    sub.add_parser("baseline", help="record SmartThings-visible set (stub)").set_defaults(func=cmd_baseline)
+    b = sub.add_parser("baseline", help="record the SmartThings-visible set")
+    b.add_argument("--token", default=os.environ.get("SMARTTHINGS_TOKEN"),
+                   help="SmartThings PAT (default: $SMARTTHINGS_TOKEN); scope r:devices:*")
+    b.add_argument("--st-device-id", default=None,
+                   help="SmartThings deviceId (default: match by --device label hint)")
+    b.add_argument("--from-status-json", default=None,
+                   help="offline: a saved /v1/devices/{id}/status dump instead of a live call")
+    b.add_argument("--out", default="../../4_analysis_output/attribute-oracle/visible_attributes.json")
+    b.set_defaults(func=cmd_baseline)
 
     d = sub.add_parser("diff", help="hidden = supported - visible")
     d.add_argument("--supported", required=True)
