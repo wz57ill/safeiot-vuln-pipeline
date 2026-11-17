@@ -1,2 +1,6 @@
 # Keep only the curated example_run.log; ignore live run output.
 last_run.log
+
+# Raw SmartThings baseline captures — contain account/network identifiers
+# (EUI, ownerId, locationId, roomId, deviceId). Local only, never committed.
+smartthings-baseline/
