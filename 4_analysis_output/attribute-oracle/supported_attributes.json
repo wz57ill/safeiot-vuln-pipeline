@@ -1,0 +1,172 @@
+{
+  "schema": "attribute-oracle/supported/v1",
+  "device": {
+    "friendly_name": "0x001788011025c932",
+    "ieee_address": "0x001788011025c932",
+    "model": "9290030675",
+    "vendor": "Philips"
+  },
+  "interview_clusters": [
+    "genBasic",
+    "genIdentify",
+    "genOnOff",
+    "genOta",
+    "genPowerCfg",
+    "msIlluminanceMeasurement",
+    "msOccupancySensing",
+    "msTemperatureMeasurement"
+  ],
+  "read_probe": {
+    "genBasic": [
+      {
+        "attribute": "zclVersion",
+        "manufacturer_code": null,
+        "answered": false,
+        "last_state_keys": []
+      },
+      {
+        "attribute": "appVersion",
+        "manufacturer_code": null,
+        "answered": false,
+        "last_state_keys": []
+      },
+      {
+        "attribute": "modelId",
+        "manufacturer_code": null,
+        "answered": true,
+        "last_state_keys": [
+          "battery",
+          "illuminance",
+          "linkquality",
+          "occupancy",
+          "occupancy_timeout",
+          "update"
+        ]
+      },
+      {
+        "attribute": "manufacturerName",
+        "manufacturer_code": null,
+        "answered": false,
+        "last_state_keys": []
+      },
+      {
+        "attribute": "swBuildId",
+        "manufacturer_code": null,
+        "answered": true,
+        "last_state_keys": [
+          "battery",
+          "illuminance",
+          "linkquality",
+          "occupancy",
+          "occupancy_timeout",
+          "update"
+        ]
+      },
+      {
+        "attribute": 51,
+        "manufacturer_code": null,
+        "answered": false,
+        "last_state_keys": []
+      }
+    ],
+    "genPowerCfg": [
+      {
+        "attribute": "batteryPercentageRemaining",
+        "manufacturer_code": null,
+        "answered": true,
+        "last_state_keys": [
+          "battery",
+          "illuminance",
+          "linkquality",
+          "occupancy",
+          "occupancy_timeout",
+          "update"
+        ]
+      },
+      {
+        "attribute": "batteryVoltage",
+        "manufacturer_code": null,
+        "answered": true,
+        "last_state_keys": [
+          "battery",
+          "illuminance",
+          "linkquality",
+          "occupancy",
+          "occupancy_timeout",
+          "update",
+          "voltage"
+        ]
+      }
+    ],
+    "msOccupancySensing": [
+      {
+        "attribute": "occupancy",
+        "manufacturer_code": null,
+        "answered": true,
+        "last_state_keys": [
+          "battery",
+          "illuminance",
+          "linkquality",
+          "occupancy",
+          "occupancy_timeout",
+          "update",
+          "voltage"
+        ]
+      },
+      {
+        "attribute": "pirOToUDelay",
+        "manufacturer_code": null,
+        "answered": true,
+        "last_state_keys": [
+          "battery",
+          "illuminance",
+          "linkquality",
+          "occupancy",
+          "occupancy_timeout",
+          "update",
+          "voltage"
+        ]
+      },
+      {
+        "attribute": 48,
+        "manufacturer_code": 4107,
+        "answered": false,
+        "last_state_keys": []
+      }
+    ],
+    "msIlluminanceMeasurement": [
+      {
+        "attribute": "measuredValue",
+        "manufacturer_code": null,
+        "answered": true,
+        "last_state_keys": [
+          "battery",
+          "illuminance",
+          "linkquality",
+          "occupancy",
+          "occupancy_timeout",
+          "update",
+          "voltage"
+        ]
+      }
+    ],
+    "msTemperatureMeasurement": [
+      {
+        "attribute": "measuredValue",
+        "manufacturer_code": null,
+        "answered": true,
+        "last_state_keys": [
+          "battery",
+          "illuminance",
+          "linkquality",
+          "occupancy",
+          "occupancy_timeout",
+          "temperature",
+          "update",
+          "voltage"
+        ]
+      }
+    ]
+  },
+  "notes": "supported-set evidence; combine with a SmartThings baseline to diff."
+}
