@@ -1,7 +1,7 @@
 {
   "schema": "attribute-oracle/supported/v1",
   "device": {
-    "friendly_name": "0x001788011025c932",
+    "friendly_name": "Motion Sensor",
     "ieee_address": "0x001788011025c932",
     "model": "9290030675",
     "vendor": "Philips"
@@ -33,15 +33,8 @@
       {
         "attribute": "modelId",
         "manufacturer_code": null,
-        "answered": true,
-        "last_state_keys": [
-          "battery",
-          "illuminance",
-          "linkquality",
-          "occupancy",
-          "occupancy_timeout",
-          "update"
-        ]
+        "answered": false,
+        "last_state_keys": []
       },
       {
         "attribute": "manufacturerName",
@@ -56,10 +49,13 @@
         "last_state_keys": [
           "battery",
           "illuminance",
+          "led_indication",
           "linkquality",
           "occupancy",
           "occupancy_timeout",
-          "update"
+          "temperature",
+          "update",
+          "voltage"
         ]
       },
       {
@@ -77,10 +73,13 @@
         "last_state_keys": [
           "battery",
           "illuminance",
+          "led_indication",
           "linkquality",
           "occupancy",
           "occupancy_timeout",
-          "update"
+          "temperature",
+          "update",
+          "voltage"
         ]
       },
       {
@@ -90,9 +89,11 @@
         "last_state_keys": [
           "battery",
           "illuminance",
+          "led_indication",
           "linkquality",
           "occupancy",
           "occupancy_timeout",
+          "temperature",
           "update",
           "voltage"
         ]
@@ -106,9 +107,11 @@
         "last_state_keys": [
           "battery",
           "illuminance",
+          "led_indication",
           "linkquality",
           "occupancy",
           "occupancy_timeout",
+          "temperature",
           "update",
           "voltage"
         ]
@@ -120,12 +123,26 @@
         "last_state_keys": [
           "battery",
           "illuminance",
+          "led_indication",
           "linkquality",
           "occupancy",
           "occupancy_timeout",
+          "temperature",
           "update",
           "voltage"
         ]
+      },
+      {
+        "attribute": "pirUToODelay",
+        "manufacturer_code": null,
+        "answered": false,
+        "last_state_keys": []
+      },
+      {
+        "attribute": "pirUToOThreshold",
+        "manufacturer_code": null,
+        "answered": false,
+        "last_state_keys": []
       },
       {
         "attribute": 48,
@@ -142,9 +159,11 @@
         "last_state_keys": [
           "battery",
           "illuminance",
+          "led_indication",
           "linkquality",
           "occupancy",
           "occupancy_timeout",
+          "temperature",
           "update",
           "voltage"
         ]
@@ -158,6 +177,7 @@
         "last_state_keys": [
           "battery",
           "illuminance",
+          "led_indication",
           "linkquality",
           "occupancy",
           "occupancy_timeout",

